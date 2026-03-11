@@ -1,0 +1,34 @@
+pipelines:
+  - id: cm360_campaign_delivery
+    description: CM360 report attachment into BigQuery
+    gmail_query: 'subject:"CM360 Delivery Report" has:attachment newer_than:30d'
+    subject_contains: "CM360 Delivery Report"
+    attachment:
+      filename_regex: '.*\.(csv|zip)$'
+      unzip: true
+    csv:
+      delimiter: ","
+      skip_leading_rows: 0
+      encoding: "utf-8-sig"
+    target:
+      project_id: "your-gcp-project-id"
+      dataset: "marketing_ingestion"
+      table: "cm360_delivery"
+      write_mode: "upsert"
+      key_columns: ["date", "campaign_id", "placement_id"]
+      time_partitioning_field: "date"
+      schema:
+        - name: "date"
+          type: "DATE"
+          mode: "REQUIRED"
+        - name: "campaign_id"
+          type: "STRING"
+        - name: "placement_id"
+          type: "STRING"
+        - name: "impressions"
+          type: "INT64"
+        - name: "clicks"
+          type: "INT64"
+        - name: "total_conversions"
+          type: "FLOAT64"
+

@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Gmail Attachment Ingestion</title>
+  <style>
+    :root {
+      --bg: #f4f4ef;
+      --card: #fffef8;
+      --ink: #1f2937;
+      --accent: #aa3a1e;
+      --muted: #6b7280;
+      --border: #d8d4c8;
+    }
+    body {
+      margin: 0;
+      font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+      background: radial-gradient(circle at top, #fff7df, var(--bg) 60%);
+      color: var(--ink);
+      padding: 20px;
+    }
+    .wrap {
+      max-width: 900px;
+      margin: 0 auto;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 18px;
+      margin-bottom: 16px;
+      box-shadow: 0 12px 30px rgba(15, 23, 42, 0.07);
+    }
+    h1 { margin-top: 0; }
+    h2 { margin-top: 0; }
+    label { display: block; margin: 10px 0 4px; }
+    input {
+      width: 100%;
+      padding: 9px 10px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      font-size: 14px;
+      box-sizing: border-box;
+      background: #ffffff;
+    }
+    button {
+      margin-top: 14px;
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 10px 14px;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    .btn-secondary {
+      background: #0f766e;
+      margin-top: 0;
+      padding: 7px 10px;
+      font-size: 13px;
+      border-radius: 6px;
+    }
+    .row-inline {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+    .check-inline {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      margin-top: 10px;
+    }
+    .check-inline input {
+      width: auto;
+      margin: 0;
+    }
+    .muted { color: var(--muted); font-size: 13px; }
+    .status {
+      font-weight: 700;
+      font-size: 14px;
+      border-radius: 6px;
+      padding: 6px 10px;
+      display: inline-block;
+    }
+    .status-ok {
+      background: #e8f8ef;
+      color: #13653a;
+    }
+    .status-warn {
+      background: #fff4dc;
+      color: #7c4a02;
+    }
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 10px;
+      margin-top: 10px;
+    }
+    .kpi {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px;
+      background: #fff;
+    }
+    .kpi .label {
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 4px;
+    }
+    .kpi .value {
+      font-size: 20px;
+      font-weight: 700;
+      line-height: 1.2;
+      word-break: break-word;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+      font-size: 14px;
+    }
+    th, td {
+      border-bottom: 1px solid var(--border);
+      text-align: left;
+      vertical-align: top;
+      padding: 8px;
+    }
+    th {
+      font-size: 12px;
+      text-transform: uppercase;
+      color: var(--muted);
+      letter-spacing: .02em;
+    }
+    .row-values {
+      font-family: ui-monospace, Menlo, Monaco, "Cascadia Mono", "Segoe UI Mono", monospace;
+      font-size: 12px;
+      color: #293042;
+      white-space: pre-wrap;
+    }
+    .error {
+      background: #fff2f0;
+      border: 1px solid #e8a19a;
+      color: #7a1f1f;
+      border-radius: 10px;
+      padding: 12px;
+      margin-top: 12px;
+      white-space: pre-wrap;
+      font-size: 13px;
+    }
+    details {
+      margin-top: 10px;
+    }
+    pre {
+      background: #121826;
+      color: #d1e4ff;
+      border-radius: 10px;
+      padding: 12px;
+      overflow: auto;
+      font-size: 12px;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>Gmail Attachment to BigQuery</h1>
+      <p class="muted">Enter a Gmail subject line. The app finds matching attachments, infers columns, and upserts into BigQuery.</p>
+      <form method="post" action="/run">
+        <label for="subject_contains">Subject contains</label>
+        <input name="subject_contains" id="subject_contains" placeholder="CM360 Weekly Report" required value="{{ form_data.subject_contains }}" />
+        <div class="row-inline">
+          <div>
+            <label for="skip_leading_rows">Rows to skip before detection</label>
+            <input name="skip_leading_rows" id="skip_leading_rows" type="number" min="0" value="{{ form_data.skip_leading_rows }}" />
+          </div>
+          <div>
+            <label for="header_row_number">Header row number (1-based)</label>
+            <input name="header_row_number" id="header_row_number" type="number" min="1" placeholder="Leave blank for suggestion"
+              {% if form_data.header_row_number %}value="{{ form_data.header_row_number }}"{% endif %}/>
+          </div>
+        </div>
+        <p class="muted">Recommended flow: first run with header row blank to get a suggested row, then set it and rerun import.</p>
+        <label class="check-inline">
+          <input type="checkbox" name="dry_run" value="true" {% if form_data.dry_run %}checked{% endif %}/>
+          Dry run (parse only, no BigQuery write)
+        </label>
+        <button type="submit">Run Import</button>
+      </form>
+      {% if error %}
+      <div class="error">{{ error }}</div>
+      {% endif %}
+    </div>
+
+    {% if result %}
+    <div class="card">
+      <h2>Run Result</h2>
+      {% set status = result.get("status", "ok") %}
+      {% if status in ["header_confirmation_required", "no_rows_found"] %}
+        <span class="status status-warn">{{ status }}</span>
+      {% else %}
+        <span class="status status-ok">ok</span>
+      {% endif %}
+
+      <div class="kpi-grid">
+        <div class="kpi">
+          <div class="label">Attachments Seen</div>
+          <div class="value">{{ result.get("attachments_seen", 0) }}</div>
+        </div>
+        <div class="kpi">
+          <div class="label">Rows Parsed</div>
+          <div class="value">{{ result.get("rows_parsed", 0) }}</div>
+        </div>
+        <div class="kpi">
+          <div class="label">Rows Loaded</div>
+          <div class="value">{{ result.get("rows_loaded", 0) }}</div>
+        </div>
+        <div class="kpi">
+          <div class="label">Table</div>
+          <div class="value" style="font-size:13px">{{ result.get("table", "-") }}</div>
+        </div>
+      </div>
+
+      {% if result.get("header_detection") %}
+      <h3>Header Detection</h3>
+      <p class="muted">Suggested header row: <strong>{{ result["header_detection"].get("suggested_row_number") }}</strong></p>
+      {% if result["header_detection"].get("candidates") %}
+      <table>
+        <thead>
+          <tr>
+            <th>Candidate Row</th>
+            <th>Preview</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for c in result["header_detection"]["candidates"] %}
+          <tr>
+            <td><strong>{{ c.row_number }}</strong></td>
+            <td class="row-values">{{ c.row_values | join(" | ") }}</td>
+            <td><button type="button" class="btn-secondary" onclick="setHeaderRow({{ c.row_number }})">Use This Row</button></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+      {% endif %}
+
+      {% if result.get("results") %}
+      <h3>Attachments</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Message ID</th>
+            <th>Filename</th>
+            <th>Rows Parsed</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in result["results"] %}
+          <tr>
+            <td class="row-values">{{ r.get("message_id", "-") }}</td>
+            <td>{{ r.get("filename", "-") }}</td>
+            <td>{{ r.get("rows_parsed", 0) }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+
+      <details>
+        <summary>View raw JSON</summary>
+        <pre>{{ result | tojson(indent=2) }}</pre>
+      </details>
+    </div>
+    {% endif %}
+  </div>
+  <script>
+    function setHeaderRow(rowNum) {
+      var input = document.getElementById("header_row_number");
+      if (input) {
+        input.value = rowNum;
+        input.scrollIntoView({behavior: "smooth", block: "center"});
+        input.focus();
+      }
+    }
+  </script>
+</body>
+</html>
