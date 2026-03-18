@@ -101,7 +101,7 @@ export PROJECT_STORE_COLLECTION="import_projects"
 
 ## Scheduler endpoint
 
-Endpoint to run all `ACTIVE` projects:
+Endpoint to run only due `ACTIVE` projects (based on each project's daily EST time, once per day):
 
 `POST /api/dispatch-due-projects`
 
@@ -115,10 +115,11 @@ Create/update scheduler job:
 export GCP_PROJECT_ID="gmail-bigquery-importer"
 export GCP_REGION="australia-southeast1"
 export SERVICE_NAME="gmail-bq-importer"
-export JOB_NAME="gmail-bq-daily"
-export CRON_SCHEDULE="0 9 * * *"
+export JOB_NAME="gmail-bq-dispatch"
+export CRON_SCHEDULE="*/15 * * * *"
+export DISPATCH_TOKEN="shared-machine-token" # optional but recommended
 
 ./scripts/create_scheduler_job.sh
 ```
 
-If `DISPATCH_TOKEN` is set, configure scheduler header `x-dispatch-token`.
+If `DISPATCH_TOKEN` is set, the script sends scheduler header `x-dispatch-token` automatically.

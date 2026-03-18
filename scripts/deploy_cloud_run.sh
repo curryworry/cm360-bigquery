@@ -12,6 +12,7 @@ set -euo pipefail
 #   PROJECT_STORE_BACKEND (firestore/json) default firestore
 #   PROJECT_STORE_COLLECTION default import_projects
 #   APP_SESSION_SECRET
+#   DISPATCH_TOKEN (optional token for /api/dispatch-due-projects)
 #   RUNTIME_SERVICE_ACCOUNT (default: gmail-bq-ingestor@<project>.iam.gserviceaccount.com)
 #   AR_REPOSITORY (default: cloud-run-images)
 
@@ -42,6 +43,7 @@ PROJECT_STORE_COLLECTION="${PROJECT_STORE_COLLECTION:-import_projects}"
 AUTO_BQ_PROJECT_ID="${AUTO_BQ_PROJECT_ID:-$GCP_PROJECT_ID}"
 AUTO_BQ_DATASET="${AUTO_BQ_DATASET:-gmail_ingestion}"
 APP_SESSION_SECRET="${APP_SESSION_SECRET:-replace-me-in-prod}"
+DISPATCH_TOKEN="${DISPATCH_TOKEN:-}"
 RUNTIME_SERVICE_ACCOUNT="${RUNTIME_SERVICE_ACCOUNT:-gmail-bq-ingestor@${GCP_PROJECT_ID}.iam.gserviceaccount.com}"
 
 echo "Deploying Cloud Run service: ${SERVICE_NAME}"
@@ -57,6 +59,7 @@ gcloud run deploy "${SERVICE_NAME}" \
   --set-env-vars "AUTO_BQ_PROJECT_ID=${AUTO_BQ_PROJECT_ID}" \
   --set-env-vars "AUTO_BQ_DATASET=${AUTO_BQ_DATASET}" \
   --set-env-vars "PROJECT_STORE_BACKEND=${PROJECT_STORE_BACKEND}" \
-  --set-env-vars "PROJECT_STORE_COLLECTION=${PROJECT_STORE_COLLECTION}"
+  --set-env-vars "PROJECT_STORE_COLLECTION=${PROJECT_STORE_COLLECTION}" \
+  --set-env-vars "DISPATCH_TOKEN=${DISPATCH_TOKEN}"
 
 echo "Deployed."

@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 from datetime import datetime, timezone
 from urllib.parse import quote_plus
+from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -43,6 +44,62 @@ def _is_logged_in(request: Request) -> bool:
     if not auth.enabled():
         return True
     return auth.validate_cookie_value(request.cookies.get(auth.cookie_name))
+
+
+def _parse_iso(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    raw = value.strip()
+    if not raw:
+        return None
+    if raw.endswith("Z"):
+        raw = raw[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def _parse_hhmm(value: str | None, fallback: tuple[int, int] = (9, 0)) -> tuple[int, int]:
+    if not value:
+        return fallback
+    parts = value.strip().split(":")
+    if len(parts) != 2:
+        return fallback
+    try:
+        hour = int(parts[0])
+        minute = int(parts[1])
+    except ValueError:
+        return fallback
+    if hour < 0 or hour > 23 or minute < 0 or minute > 59:
+        return fallback
+    return (hour, minute)
+
+
+def _project_due_now(project: dict, now_utc: datetime) -> tuple[bool, str]:
+    # We intentionally run schedules in fixed EST/ET for all projects.
+    tz_name = project.get("timezone") or "America/New_York"
+    tz = ZoneInfo(tz_name)
+    now_local = now_utc.astimezone(tz)
+
+    hour, minute = _parse_hhmm(project.get("schedule_time_utc"), fallback=(9, 0))
+    due_local = now_local.replace(hour=hour, minute=minute, second=0, microsecond=0)
+
+    if now_local < due_local:
+        return (False, "before_scheduled_time")
+
+    last_run_at = _parse_iso(project.get("last_run_at"))
+    if last_run_at is None:
+        return (True, "never_run")
+
+    last_local = last_run_at.astimezone(tz)
+    if last_local.date() == now_local.date() and last_local >= due_local:
+        return (False, "already_ran_today")
+
+    return (True, "due")
 
 
 def _run_project_internal(project_id: str, dry_run: bool = False) -> dict:
@@ -370,12 +427,27 @@ def dispatch_due_projects(request: Request) -> JSONResponse:
         if got != required:
             raise HTTPException(status_code=401, detail="Invalid dispatch token.")
 
+    now_utc = datetime.now(timezone.utc)
     results = []
+    skipped = []
     for p in store.list_projects():
         if p.get("status") != "ACTIVE":
+            skipped.append({"project_id": p.get("id"), "reason": "not_active"})
+            continue
+        due, reason = _project_due_now(p, now_utc)
+        if not due:
+            skipped.append({"project_id": p.get("id"), "reason": reason})
             continue
         results.append(_run_project_internal(p["id"], dry_run=False))
-    return JSONResponse(content={"count": len(results), "results": results})
+    return JSONResponse(
+        content={
+            "checked_at": now_utc.isoformat(),
+            "ran_count": len(results),
+            "skipped_count": len(skipped),
+            "results": results,
+            "skipped": skipped,
+        }
+    )
 
 
 def run_cli() -> None:
