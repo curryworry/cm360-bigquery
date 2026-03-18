@@ -1,85 +1,124 @@
-# Gmail Attachment -> BigQuery Ingestion
+# Gmail Attachment -> BigQuery Importer
 
-Internal tool where the end user only enters a Gmail subject line.
+Internal tool for recurring Gmail CSV/ZIP ingestion into BigQuery.
 
-The service automatically:
+## What it does
 
-1. Finds Gmail messages with matching subject + attachments
-2. Downloads CSV or ZIP->CSV attachments
-3. Detects and normalizes CSV column names
-4. Creates dataset/table in BigQuery if missing
-5. Upserts rows into a subject-based table
+1. Finds Gmail attachments by subject.
+2. Supports CSV or ZIP containing CSV.
+3. Detects header row candidates.
+4. Lets users confirm header row in UI.
+5. Creates/updates BigQuery table.
+6. Maintains ongoing import projects with status controls.
 
-If files include metadata rows before the real header, users can control:
-- `skip_leading_rows`
-- `header_row_number`
+## Core UI flows
 
-## Quick Start
+1. `/` Import Tool:
+- ad-hoc import and header detection
+- "Use This Row" quick-fill
+- save as ongoing project
 
-### 1) Install
+2. `/projects` Ongoing Projects:
+- create projects
+- run now
+- pause/resume/stop
+- delete project
+- optional delete BigQuery table on project delete
+- view recent run logs
+
+## Auth
+
+Simple shared password gate:
+
+```bash
+APP_PASSWORD=your-password
+APP_SESSION_SECRET=long-random-secret
+```
+
+If `APP_PASSWORD` is empty, auth is disabled.
+
+## Project persistence
+
+Two backends:
+
+- `PROJECT_STORE_BACKEND=firestore` (recommended for Cloud Run)
+- `PROJECT_STORE_BACKEND=json` (local dev only)
+
+Firestore collection defaults to `import_projects`.
+
+## Local run
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e .
-```
 
-### 2) Authenticate and set environment variables
-
-```bash
 gcloud auth application-default login \
   --scopes=https://www.googleapis.com/auth/cloud-platform,https://www.googleapis.com/auth/gmail.readonly
-export AUTO_BQ_PROJECT_ID="your-gcp-project-id"   # optional if ADC has default project
-export AUTO_BQ_DATASET="gmail_ingestion"          # optional
-export GMAIL_LOOKBACK_DAYS="30"                   # optional
-export GMAIL_MAX_MESSAGES="20"                    # optional
+
+uvicorn src.main:app --env-file .env --reload
 ```
 
-Optional service-account mode (instead of user ADC):
-```bash
-export GOOGLE_APPLICATION_CREDENTIALS="/abs/path/to/service-account.json"
-export GMAIL_DELEGATED_USER="reporting@yourdomain.com"
-```
-
-BigQuery permissions need dataset/table create + job execution.
-
-### 3) Run via UI
+## Required env vars
 
 ```bash
-uvicorn src.main:app --reload
+AUTO_BQ_PROJECT_ID=gmail-bigquery-importer
+AUTO_BQ_DATASET=gmail_ingestion
+GMAIL_LOOKBACK_DAYS=30
+GMAIL_MAX_MESSAGES=20
+INGESTION_MODE=latest_only
+
+APP_PASSWORD=change-me
+APP_SESSION_SECRET=change-me-too
+
+PROJECT_STORE_BACKEND=firestore
+PROJECT_STORE_COLLECTION=import_projects
 ```
 
-Open [http://127.0.0.1:8000](http://127.0.0.1:8000).
-
-### 4) Run via CLI
+Optional:
 
 ```bash
-ingest-run --subject-contains "CM360 Delivery Report"
-ingest-run --subject-contains "CM360 Delivery Report" --dry-run
-ingest-run --subject-contains "CM360 Delivery Report" --skip-leading-rows 3 --header-row-number 5
+DISPATCH_TOKEN=shared-machine-token
 ```
 
-## Table Behavior
+## Cloud Run deployment
 
-- BigQuery table name is derived from subject text.
-- Dataset defaults to `gmail_ingestion` (override with `AUTO_BQ_DATASET`).
-- Column names are auto-normalized from CSV headers.
-- Upsert key strategy is automatic:
-  - Preferred: `date + *_id` columns
-  - Fallback: all `*_id` columns
-  - Final fallback: full-row hash
+Use the provided script:
 
-In fallback mode, changed rows may insert as new rows because there is no stable business key in the CSV.
+```bash
+export GCP_PROJECT_ID="gmail-bigquery-importer"
+export GCP_REGION="australia-southeast1"
+export SERVICE_NAME="gmail-bq-importer"
+export APP_PASSWORD="your-password"
+export APP_SESSION_SECRET="long-random-secret"
+export AUTO_BQ_PROJECT_ID="gmail-bigquery-importer"
+export AUTO_BQ_DATASET="gmail_ingestion"
+export PROJECT_STORE_BACKEND="firestore"
+export PROJECT_STORE_COLLECTION="import_projects"
 
-## Expected Flow
+./scripts/deploy_cloud_run.sh
+```
 
-1. Query Gmail with `subject:"<input>" has:attachment`.
-2. Pull matching attachments.
-3. If ZIP, extract all CSV files.
-4. Parse CSV into dictionaries.
-5. Ensure dataset + target table exist.
-6. Upsert to target table via staging + `MERGE`.
+## Scheduler endpoint
 
-## Recommended Next Step
+Endpoint to run all `ACTIVE` projects:
 
-Add a Cloud Scheduler job hitting `/api/run` for each pipeline to run this automatically.
+`POST /api/dispatch-due-projects`
+
+Optional protection with `DISPATCH_TOKEN` header:
+
+`x-dispatch-token: <token>`
+
+Create/update scheduler job:
+
+```bash
+export GCP_PROJECT_ID="gmail-bigquery-importer"
+export GCP_REGION="australia-southeast1"
+export SERVICE_NAME="gmail-bq-importer"
+export JOB_NAME="gmail-bq-daily"
+export CRON_SCHEDULE="0 9 * * *"
+
+./scripts/create_scheduler_job.sh
+```
+
+If `DISPATCH_TOKEN` is set, configure scheduler header `x-dispatch-token`.

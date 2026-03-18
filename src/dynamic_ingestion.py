@@ -205,27 +205,36 @@ def run_subject_ingestion(
     dry_run: bool = False,
     header_row_number: int | None = None,
     skip_leading_rows: int = 0,
+    target_project_id: str | None = None,
+    target_dataset: str | None = None,
+    target_table: str | None = None,
+    ingestion_mode: str | None = None,
 ) -> dict[str, Any]:
     if not subject_contains.strip():
         raise ValueError("subject_contains is required.")
 
-    default_project = os.getenv("AUTO_BQ_PROJECT_ID")
+    default_project = target_project_id or os.getenv("AUTO_BQ_PROJECT_ID")
     if not default_project:
         _, default_project = google.auth.default()
     if not default_project:
         raise ValueError("Unable to determine GCP project. Set AUTO_BQ_PROJECT_ID.")
 
-    dataset = os.getenv("AUTO_BQ_DATASET", "gmail_ingestion")
+    dataset = target_dataset or os.getenv("AUTO_BQ_DATASET", "gmail_ingestion")
     lookback_days = int(os.getenv("GMAIL_LOOKBACK_DAYS", "30"))
     max_messages = int(os.getenv("GMAIL_MAX_MESSAGES", "20"))
     delegated_user = os.getenv("GMAIL_DELEGATED_USER")
+    mode = (ingestion_mode or os.getenv("INGESTION_MODE", "latest_only")).lower().strip()
+    if mode not in {"all_matches", "latest_only"}:
+        raise ValueError("ingestion_mode must be one of: all_matches, latest_only")
 
-    table = _slugify(subject_contains)
+    table = target_table or _slugify(subject_contains)
     full_table_id = f"{default_project}.{dataset}.{table}"
 
     gmail = GmailClient(delegated_user=delegated_user)
     query = f'subject:"{subject_contains}" has:attachment newer_than:{lookback_days}d'
     attachments = gmail.fetch_attachments_by_query(query=query, max_results=max_messages)
+    if mode == "latest_only" and attachments:
+        attachments = attachments[:1]
 
     raw_rows: list[dict[str, Any]] = []
     raw_rows_source: list[dict[str, str]] = []
@@ -272,7 +281,9 @@ def run_subject_ingestion(
             "attachments_seen": len(attachments),
             "rows_parsed": 0,
             "rows_loaded": 0,
+            "rows_estimated": 0,
             "status": "no_rows_found",
+            "ingestion_mode": mode,
             "header_row_number_used": header_row_number,
             "skip_leading_rows": skip_leading_rows,
             "header_detection": first_csv_hint,
@@ -287,9 +298,11 @@ def run_subject_ingestion(
             "attachments_seen": len(attachments),
             "rows_parsed": len(raw_rows),
             "rows_loaded": 0,
+            "rows_estimated": len(raw_rows),
             "dry_run": dry_run,
             "status": "header_confirmation_required",
             "message": "Confirm header row number and rerun import.",
+            "ingestion_mode": mode,
             "header_row_number_used": None,
             "skip_leading_rows": skip_leading_rows,
             "header_detection": first_csv_hint,
@@ -325,7 +338,9 @@ def run_subject_ingestion(
         "attachments_seen": len(attachments),
         "rows_parsed": len(raw_rows),
         "rows_loaded": loaded,
+        "rows_estimated": len(raw_rows),
         "dry_run": dry_run,
+        "ingestion_mode": mode,
         "header_row_number_used": header_row_number,
         "skip_leading_rows": skip_leading_rows,
         "header_detection": first_csv_hint,

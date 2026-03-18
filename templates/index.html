@@ -34,6 +34,22 @@
     }
     h1 { margin-top: 0; }
     h2 { margin-top: 0; }
+    .topnav {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+    .topnav a, .topnav button {
+      text-decoration: none;
+      border: 1px solid var(--border);
+      background: #fff;
+      color: var(--ink);
+      border-radius: 8px;
+      padding: 8px 10px;
+      font-size: 13px;
+      cursor: pointer;
+    }
     label { display: block; margin: 10px 0 4px; }
     input {
       width: 100%;
@@ -53,6 +69,9 @@
       padding: 10px 14px;
       cursor: pointer;
       font-weight: 600;
+    }
+    .btn-alt {
+      background: #0f766e;
     }
     .btn-secondary {
       background: #0f766e;
@@ -164,6 +183,15 @@
 </head>
 <body>
   <div class="wrap">
+    <div class="topnav">
+      <div>
+        <a href="/">Import Tool</a>
+        <a href="/projects">Ongoing Projects</a>
+      </div>
+      <form method="post" action="/logout">
+        <button type="submit">Log out</button>
+      </form>
+    </div>
     <div class="card">
       <h1>Gmail Attachment to BigQuery</h1>
       <p class="muted">Enter a Gmail subject line. The app finds matching attachments, infers columns, and upserts into BigQuery.</p>
@@ -181,12 +209,14 @@
               {% if form_data.header_row_number %}value="{{ form_data.header_row_number }}"{% endif %}/>
           </div>
         </div>
-        <p class="muted">Recommended flow: first run with header row blank to get a suggested row, then set it and rerun import.</p>
-        <label class="check-inline">
-          <input type="checkbox" name="dry_run" value="true" {% if form_data.dry_run %}checked{% endif %}/>
-          Dry run (parse only, no BigQuery write)
-        </label>
-        <button type="submit">Run Import</button>
+        <label for="ingestion_mode">Ingestion mode</label>
+        <select name="ingestion_mode" id="ingestion_mode">
+          <option value="latest_only" {% if form_data.ingestion_mode == "latest_only" %}selected{% endif %}>Latest file only (Recommended)</option>
+          <option value="all_matches" {% if form_data.ingestion_mode == "all_matches" %}selected{% endif %}>All matching files</option>
+        </select>
+        <p class="muted">Recommended flow: click Detect Headers first, choose header row, then click Prepare Project.</p>
+        <button type="submit" name="run_action" value="setup" class="btn-alt">Detect Headers</button>
+        <button type="submit" name="run_action" value="import">Prepare Project</button>
       </form>
       {% if error %}
       <div class="error">{{ error }}</div>
@@ -203,7 +233,7 @@
         <span class="status status-ok">ok</span>
       {% endif %}
 
-      <div class="kpi-grid">
+        <div class="kpi-grid">
         <div class="kpi">
           <div class="label">Attachments Seen</div>
           <div class="value">{{ result.get("attachments_seen", 0) }}</div>
@@ -213,8 +243,17 @@
           <div class="value">{{ result.get("rows_parsed", 0) }}</div>
         </div>
         <div class="kpi">
+          {% if result.get("dry_run") %}
+          <div class="label">Rows To Load (Estimated)</div>
+          <div class="value">{{ result.get("rows_estimated", result.get("rows_parsed", 0)) }}</div>
+          {% else %}
           <div class="label">Rows Loaded</div>
           <div class="value">{{ result.get("rows_loaded", 0) }}</div>
+          {% endif %}
+        </div>
+        <div class="kpi">
+          <div class="label">Ingestion Mode</div>
+          <div class="value" style="font-size:13px">{{ result.get("ingestion_mode", "latest_only") }}</div>
         </div>
         <div class="kpi">
           <div class="label">Table</div>
@@ -274,6 +313,66 @@
         <pre>{{ result | tojson(indent=2) }}</pre>
       </details>
     </div>
+
+    {% if result and form_data.run_action == "import" and result.get("header_row_number_used") %}
+    <div class="card">
+      <h2>Save As Ongoing Project</h2>
+      <p class="muted">This will run the first real BigQuery import, then create a daily ongoing project.</p>
+      <form method="post" action="/projects">
+        <div class="row-inline">
+          <div>
+            <label for="name">Project name</label>
+            <input id="name" name="name" required value="{{ result.get('subject_contains','') }}" />
+          </div>
+          <div>
+            <label for="subject_contains_project">Subject contains</label>
+            <input id="subject_contains_project" name="subject_contains" required value="{{ result.get('subject_contains','') }}" />
+          </div>
+        </div>
+        <div class="row-inline">
+          <div>
+            <label for="header_row_number_project">Header row number</label>
+            <input id="header_row_number_project" name="header_row_number" type="number" min="1" required value="{{ result.get('header_row_number_used') }}" />
+          </div>
+          <div>
+            <label for="skip_leading_rows_project">Rows to skip</label>
+            <input id="skip_leading_rows_project" name="skip_leading_rows" type="number" min="0" required value="{{ result.get('skip_leading_rows',0) }}" />
+          </div>
+        </div>
+        <div class="row-inline">
+          <div>
+            <label for="target_project_id">Target project ID</label>
+            <input id="target_project_id" name="target_project_id" required value="{{ result.get('table','').split('.')[0] if result.get('table') else '' }}" />
+          </div>
+          <div>
+            <label for="target_dataset">Target dataset</label>
+            <input id="target_dataset" name="target_dataset" required value="{{ result.get('table','').split('.')[1] if result.get('table') else 'gmail_ingestion' }}" />
+          </div>
+        </div>
+        <div class="row-inline">
+          <div>
+            <label for="target_table">Target table</label>
+            <input id="target_table" name="target_table" required value="{{ result.get('table','').split('.')[2] if result.get('table') else '' }}" />
+          </div>
+          <div>
+            <label for="ingestion_mode_project">Ingestion mode</label>
+            <select id="ingestion_mode_project" name="ingestion_mode">
+              <option value="latest_only" {% if result.get("ingestion_mode","latest_only") == "latest_only" %}selected{% endif %}>Latest file only (Recommended)</option>
+              <option value="all_matches" {% if result.get("ingestion_mode","latest_only") == "all_matches" %}selected{% endif %}>All matching files</option>
+            </select>
+          </div>
+        </div>
+        <div class="row-inline">
+          <div>
+            <label for="schedule_time_utc">Daily run time (EST, HH:MM)</label>
+            <input id="schedule_time_utc" name="schedule_time_utc" value="09:00" />
+          </div>
+          <div></div>
+        </div>
+        <button type="submit">Create Ongoing Project</button>
+      </form>
+    </div>
+    {% endif %}
     {% endif %}
   </div>
   <script>

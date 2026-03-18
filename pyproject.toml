@@ -13,10 +13,12 @@ dependencies = [
   "jinja2>=3.1.0",
   "python-multipart>=0.0.9",
   "PyYAML>=6.0.0",
+  "itsdangerous>=2.2.0",
   "google-api-python-client>=2.154.0",
   "google-auth>=2.36.0",
   "google-auth-httplib2>=0.2.0",
   "google-cloud-bigquery>=3.28.0",
+  "google-cloud-firestore>=2.20.0",
 ]
 
 [project.scripts]
@@ -25,4 +27,3 @@ ingest-run = "src.main:run_cli"
 [tool.setuptools]
 package-dir = {"" = "."}
 packages = ["src"]
-

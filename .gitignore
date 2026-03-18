@@ -6,3 +6,4 @@ __pycache__/
 *.egg-info/
 .playwright-cli/
 output/playwright/
+data/projects.json

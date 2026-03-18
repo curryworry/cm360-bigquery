@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ongoing Projects</title>
+  <style>
+    :root { --bg:#f4f4ef; --card:#fffef8; --ink:#1f2937; --accent:#aa3a1e; --border:#d8d4c8; --muted:#6b7280; }
+    body { margin:0; font-family:"IBM Plex Sans","Segoe UI",sans-serif; background:var(--bg); color:var(--ink); padding:20px; }
+    .wrap { max-width:1100px; margin:0 auto; }
+    .topnav { display:flex; justify-content:space-between; margin-bottom:10px; }
+    .topnav a, .topnav button { text-decoration:none; border:1px solid var(--border); background:#fff; color:var(--ink); border-radius:8px; padding:8px 10px; font-size:13px; cursor:pointer; }
+    .card { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:16px; margin-bottom:16px; }
+    .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+    label { display:block; margin-bottom:6px; font-size:13px; }
+    input, select { width:100%; box-sizing:border-box; border:1px solid var(--border); border-radius:8px; padding:9px 10px; }
+    button { margin-top:10px; border:none; border-radius:8px; padding:8px 10px; font-weight:600; cursor:pointer; background:var(--accent); color:#fff; }
+    table { width:100%; border-collapse:collapse; }
+    th, td { padding:8px; border-bottom:1px solid var(--border); text-align:left; vertical-align:top; font-size:13px; }
+    th { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.02em; }
+    .actions form { display:inline-block; margin-right:6px; }
+    .mini { padding:6px 8px; margin-top:0; font-size:12px; border-radius:6px; }
+    .ok { background:#0f766e; }
+    .warn { background:#a16207; }
+    .danger { background:#991b1b; }
+    .muted { color:var(--muted); font-size:12px; }
+    .run { margin-top:4px; padding:6px 8px; border:1px solid var(--border); border-radius:8px; background:#fff; }
+    .error { margin-bottom:12px; color:#7a1f1f; background:#fff2f0; border:1px solid #e8a19a; border-radius:8px; padding:10px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="topnav">
+      <div>
+        <a href="/">Import Tool</a>
+        <a href="/projects">Ongoing Projects</a>
+      </div>
+      <form method="post" action="/logout">
+        <button type="submit">Log out</button>
+      </form>
+    </div>
+    {% if error %}
+    <div class="error">{{ error }}</div>
+    {% endif %}
+
+    <div class="card">
+      <h2 style="margin-top:0">Ongoing Projects</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Status</th>
+            <th>Target Table</th>
+            <th>Last Run</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for p in projects %}
+          <tr>
+            <td>
+              <strong>{{ p.name }}</strong><br/>
+              <span class="muted">Subject: {{ p.subject_contains }}</span><br/>
+              <span class="muted">Header row: {{ p.header_row_number }}, Skip: {{ p.skip_leading_rows }}, Mode: {{ p.ingestion_mode or "latest_only" }}</span>
+            </td>
+            <td>{{ p.status }}</td>
+            <td><code>{{ p.target_project_id }}.{{ p.target_dataset }}.{{ p.target_table }}</code></td>
+            <td>
+              <span class="muted">At: {{ p.last_run_at or "-" }}</span><br/>
+              <span class="muted">Status: {{ p.last_status or "-" }}</span><br/>
+              <span class="muted">Rows loaded: {{ p.last_rows_loaded or 0 }}</span>
+            </td>
+            <td class="actions">
+              <form method="post" action="/projects/{{ p.id }}/run">
+                <button class="mini ok" type="submit">Run now</button>
+              </form>
+              <form method="post" action="/projects/{{ p.id }}/status">
+                <input type="hidden" name="status" value="ACTIVE" />
+                <button class="mini ok" type="submit">Resume</button>
+              </form>
+              <form method="post" action="/projects/{{ p.id }}/status">
+                <input type="hidden" name="status" value="PAUSED" />
+                <button class="mini warn" type="submit">Pause</button>
+              </form>
+              <form method="post" action="/projects/{{ p.id }}/status">
+                <input type="hidden" name="status" value="STOPPED" />
+                <button class="mini warn" type="submit">Stop</button>
+              </form>
+              <form method="post" action="/projects/{{ p.id }}/delete">
+                <label class="muted"><input type="checkbox" name="delete_table" value="true" /> delete table</label>
+                <button class="mini danger" type="submit">Delete project</button>
+              </form>
+            </td>
+          </tr>
+          <tr>
+            <td colspan="5">
+              <div class="muted">Recent runs</div>
+              {% if p.runs %}
+                {% for r in p.runs %}
+                <div class="run">
+                  <strong>{{ r.status }}</strong> |
+                  parsed {{ r.rows_parsed or 0 }}, loaded {{ r.rows_loaded or 0 }} |
+                  {{ r.message or "-" }} |
+                  {{ r.created_at or "-" }}
+                </div>
+                {% endfor %}
+              {% else %}
+                <div class="run">No runs yet.</div>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</body>
+</html>
