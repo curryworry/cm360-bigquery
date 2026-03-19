@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from typing import Any
 
 import google.auth
+from google.auth import iam
+from google.auth.transport.requests import Request
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
@@ -31,7 +33,29 @@ class GmailClient:
                 )
             creds = creds.with_subject(self.delegated_user)
         else:
-            creds, _ = google.auth.default(scopes=GMAIL_SCOPES)
+            # On Cloud Run, ADC is usually compute/service-account credentials that do not
+            # directly support with_subject(). Build a keyless signer-backed service account
+            # credential so Gmail domain-wide delegation works without JSON keys.
+            base_creds, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+            if self.delegated_user:
+                request = Request()
+                if not base_creds.valid:
+                    base_creds.refresh(request)
+                sa_email = getattr(base_creds, "service_account_email", None)
+                if not sa_email:
+                    raise ValueError(
+                        "Unable to determine runtime service account email for delegated Gmail auth."
+                    )
+                signer = iam.Signer(request, base_creds, sa_email)
+                creds = service_account.Credentials(
+                    signer=signer,
+                    service_account_email=sa_email,
+                    token_uri="https://oauth2.googleapis.com/token",
+                    scopes=GMAIL_SCOPES,
+                    subject=self.delegated_user,
+                )
+            else:
+                creds = base_creds
         self.service = build("gmail", "v1", credentials=creds, cache_discovery=False)
 
     def list_messages(self, query: str, max_results: int = 10) -> list[dict[str, Any]]:

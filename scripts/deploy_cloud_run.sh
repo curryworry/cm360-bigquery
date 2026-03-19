@@ -13,6 +13,7 @@ set -euo pipefail
 #   PROJECT_STORE_COLLECTION default import_projects
 #   APP_SESSION_SECRET
 #   DISPATCH_TOKEN (optional token for /api/dispatch-due-projects)
+#   GMAIL_DELEGATED_USER (recommended for service-account domain-wide delegation)
 #   RUNTIME_SERVICE_ACCOUNT (default: gmail-bq-ingestor@<project>.iam.gserviceaccount.com)
 #   AR_REPOSITORY (default: cloud-run-images)
 
@@ -44,6 +45,7 @@ AUTO_BQ_PROJECT_ID="${AUTO_BQ_PROJECT_ID:-$GCP_PROJECT_ID}"
 AUTO_BQ_DATASET="${AUTO_BQ_DATASET:-gmail_ingestion}"
 APP_SESSION_SECRET="${APP_SESSION_SECRET:-replace-me-in-prod}"
 DISPATCH_TOKEN="${DISPATCH_TOKEN:-}"
+GMAIL_DELEGATED_USER="${GMAIL_DELEGATED_USER:-}"
 RUNTIME_SERVICE_ACCOUNT="${RUNTIME_SERVICE_ACCOUNT:-gmail-bq-ingestor@${GCP_PROJECT_ID}.iam.gserviceaccount.com}"
 
 echo "Deploying Cloud Run service: ${SERVICE_NAME}"
@@ -60,6 +62,7 @@ gcloud run deploy "${SERVICE_NAME}" \
   --set-env-vars "AUTO_BQ_DATASET=${AUTO_BQ_DATASET}" \
   --set-env-vars "PROJECT_STORE_BACKEND=${PROJECT_STORE_BACKEND}" \
   --set-env-vars "PROJECT_STORE_COLLECTION=${PROJECT_STORE_COLLECTION}" \
-  --set-env-vars "DISPATCH_TOKEN=${DISPATCH_TOKEN}"
+  --set-env-vars "DISPATCH_TOKEN=${DISPATCH_TOKEN}" \
+  --set-env-vars "GMAIL_DELEGATED_USER=${GMAIL_DELEGATED_USER}"
 
 echo "Deployed."
