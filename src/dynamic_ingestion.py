@@ -17,7 +17,7 @@ from .attachment_parser import (
     suggest_header_row,
 )
 from .gmail_client import GmailClient
-from .models import CsvConfig
+from .models import AttachmentPayload, CsvConfig
 
 
 def _slugify(value: str) -> str:
@@ -200,19 +200,13 @@ def _load_and_merge(
     return len(rows)
 
 
-def run_subject_ingestion(
+def _resolve_ingestion_target(
     subject_contains: str,
-    dry_run: bool = False,
-    header_row_number: int | None = None,
-    skip_leading_rows: int = 0,
-    target_project_id: str | None = None,
-    target_dataset: str | None = None,
-    target_table: str | None = None,
-    ingestion_mode: str | None = None,
-) -> dict[str, Any]:
-    if not subject_contains.strip():
-        raise ValueError("subject_contains is required.")
-
+    target_project_id: str | None,
+    target_dataset: str | None,
+    target_table: str | None,
+    ingestion_mode: str | None,
+) -> tuple[str, str, str, str, str]:
     default_project = target_project_id or os.getenv("AUTO_BQ_PROJECT_ID")
     if not default_project:
         _, default_project = google.auth.default()
@@ -220,19 +214,27 @@ def run_subject_ingestion(
         raise ValueError("Unable to determine GCP project. Set AUTO_BQ_PROJECT_ID.")
 
     dataset = target_dataset or os.getenv("AUTO_BQ_DATASET", "gmail_ingestion")
-    lookback_days = int(os.getenv("GMAIL_LOOKBACK_DAYS", "30"))
-    max_messages = int(os.getenv("GMAIL_MAX_MESSAGES", "20"))
-    delegated_user = os.getenv("GMAIL_DELEGATED_USER")
     mode = (ingestion_mode or os.getenv("INGESTION_MODE", "latest_only")).lower().strip()
     if mode not in {"all_matches", "latest_only"}:
         raise ValueError("ingestion_mode must be one of: all_matches, latest_only")
 
     table = target_table or _slugify(subject_contains)
     full_table_id = f"{default_project}.{dataset}.{table}"
+    return default_project, dataset, mode, table, full_table_id
 
-    gmail = GmailClient(delegated_user=delegated_user)
-    query = f'subject:"{subject_contains}" has:attachment newer_than:{lookback_days}d'
-    attachments = gmail.fetch_attachments_by_query(query=query, max_results=max_messages)
+
+def _ingest_attachments(
+    subject_contains: str,
+    attachments: list[AttachmentPayload],
+    dry_run: bool,
+    header_row_number: int | None,
+    skip_leading_rows: int,
+    query: str,
+    default_project: str,
+    dataset: str,
+    mode: str,
+    full_table_id: str,
+) -> dict[str, Any]:
     if mode == "latest_only" and attachments:
         attachments = attachments[:1]
 
@@ -349,3 +351,55 @@ def run_subject_ingestion(
         "column_name_map": col_map,
         "results": per_attachment,
     }
+
+
+def run_subject_ingestion(
+    subject_contains: str,
+    dry_run: bool = False,
+    header_row_number: int | None = None,
+    skip_leading_rows: int = 0,
+    target_project_id: str | None = None,
+    target_dataset: str | None = None,
+    target_table: str | None = None,
+    ingestion_mode: str | None = None,
+    attachments_override: list[AttachmentPayload] | None = None,
+    query_override: str | None = None,
+) -> dict[str, Any]:
+    if not subject_contains.strip():
+        raise ValueError("subject_contains is required.")
+
+    default_project, dataset, mode, _table, full_table_id = _resolve_ingestion_target(
+        subject_contains=subject_contains,
+        target_project_id=target_project_id,
+        target_dataset=target_dataset,
+        target_table=target_table,
+        ingestion_mode=ingestion_mode,
+    )
+    lookback_days = int(os.getenv("GMAIL_LOOKBACK_DAYS", "30"))
+    max_messages = int(os.getenv("GMAIL_MAX_MESSAGES", "20"))
+
+    if attachments_override is None:
+        delegated_user = os.getenv("GMAIL_DELEGATED_USER")
+        gmail = GmailClient(delegated_user=delegated_user)
+        query = query_override or f'subject:"{subject_contains}" has:attachment newer_than:{lookback_days}d'
+        attachments = gmail.fetch_attachments_by_query(
+            query=query,
+            max_results=max_messages,
+            latest_only=(mode == "latest_only"),
+        )
+    else:
+        query = query_override or f'subject:"{subject_contains}" has:attachment newer_than:{lookback_days}d'
+        attachments = attachments_override
+
+    return _ingest_attachments(
+        subject_contains=subject_contains,
+        attachments=attachments,
+        dry_run=dry_run,
+        header_row_number=header_row_number,
+        skip_leading_rows=skip_leading_rows,
+        query=query,
+        default_project=default_project,
+        dataset=dataset,
+        mode=mode,
+        full_table_id=full_table_id,
+    )

@@ -16,6 +16,7 @@ from pydantic import BaseModel
 
 from .auth import PasswordAuth
 from .dynamic_ingestion import run_subject_ingestion
+from .gmail_client import GmailClient
 from .project_store import ProjectStore
 
 app = FastAPI(title="Gmail Attachment Ingestion")
@@ -102,7 +103,12 @@ def _project_due_now(project: dict, now_utc: datetime) -> tuple[bool, str]:
     return (True, "due")
 
 
-def _run_project_internal(project_id: str, dry_run: bool = False) -> dict:
+def _run_project_internal(
+    project_id: str,
+    dry_run: bool = False,
+    attachments_override: list | None = None,
+    query_override: str | None = None,
+) -> dict:
     project = store.get_project(project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found.")
@@ -117,6 +123,8 @@ def _run_project_internal(project_id: str, dry_run: bool = False) -> dict:
             target_dataset=project.get("target_dataset"),
             target_table=project.get("target_table"),
             ingestion_mode=project.get("ingestion_mode", "latest_only"),
+            attachments_override=attachments_override,
+            query_override=query_override,
         )
         store.update_project(
             project_id,
@@ -430,6 +438,8 @@ def dispatch_due_projects(request: Request) -> JSONResponse:
     now_utc = datetime.now(timezone.utc)
     results = []
     skipped = []
+    due_latest_only = []
+    due_other = []
     for p in store.list_projects():
         if p.get("status") != "ACTIVE":
             skipped.append({"project_id": p.get("id"), "reason": "not_active"})
@@ -438,6 +448,40 @@ def dispatch_due_projects(request: Request) -> JSONResponse:
         if not due:
             skipped.append({"project_id": p.get("id"), "reason": reason})
             continue
+        if (p.get("ingestion_mode") or "latest_only") == "latest_only":
+            due_latest_only.append(p)
+        else:
+            due_other.append(p)
+
+    if due_latest_only:
+        shared_lookback_days = int(os.getenv("GMAIL_SHARED_LOOKBACK_DAYS", "7"))
+        shared_max_messages = int(os.getenv("GMAIL_SHARED_MAX_MESSAGES", "100"))
+        shared_query = f"has:attachment newer_than:{shared_lookback_days}d"
+        gmail = GmailClient(delegated_user=os.getenv("GMAIL_DELEGATED_USER"))
+        latest_matches = gmail.find_latest_messages_by_subjects(
+            subject_filters={p["id"]: p.get("subject_contains", "") for p in due_latest_only},
+            lookback_days=shared_lookback_days,
+            max_results=shared_max_messages,
+        )
+        attachments_cache: dict[str, list] = {}
+        for p in due_latest_only:
+            match = latest_matches.get(p["id"])
+            attachments = []
+            if match:
+                message_id = match["message_id"]
+                if message_id not in attachments_cache:
+                    attachments_cache[message_id] = gmail.fetch_attachments_from_message(message_id)
+                attachments = attachments_cache[message_id]
+            results.append(
+                _run_project_internal(
+                    p["id"],
+                    dry_run=False,
+                    attachments_override=attachments,
+                    query_override=shared_query,
+                )
+            )
+
+    for p in due_other:
         results.append(_run_project_internal(p["id"], dry_run=False))
     return JSONResponse(
         content={

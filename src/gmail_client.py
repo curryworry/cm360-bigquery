@@ -3,6 +3,8 @@ from __future__ import annotations
 import base64
 import os
 import re
+import time
+import random
 from dataclasses import dataclass
 from typing import Any
 
@@ -11,6 +13,7 @@ from google.auth import iam
 from google.auth.transport.requests import Request
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 
 from .models import AttachmentPayload, PipelineConfig
 
@@ -57,15 +60,113 @@ class GmailClient:
             else:
                 creds = base_creds
         self.service = build("gmail", "v1", credentials=creds, cache_discovery=False)
+        self.retry_max_attempts = max(int(os.getenv("GMAIL_API_MAX_ATTEMPTS", "5")), 1)
+        self.retry_base_sleep = max(float(os.getenv("GMAIL_API_BASE_SLEEP_SECONDS", "1")), 0)
+        self.retry_max_sleep = max(float(os.getenv("GMAIL_API_MAX_SLEEP_SECONDS", "30")), 0)
+
+    def _is_retryable_http_error(self, exc: HttpError) -> bool:
+        status = getattr(getattr(exc, "resp", None), "status", None)
+        if status in {429, 500, 502, 503, 504}:
+            return True
+        reason = str(exc).lower()
+        return "ratelimitexceeded" in reason or "user-rate limit exceeded" in reason
+
+    def _execute(self, request: Any) -> Any:
+        last_exc: Exception | None = None
+        for attempt in range(1, self.retry_max_attempts + 1):
+            try:
+                return request.execute()
+            except HttpError as exc:
+                last_exc = exc
+                if attempt >= self.retry_max_attempts or not self._is_retryable_http_error(exc):
+                    raise
+                backoff = min(self.retry_max_sleep, self.retry_base_sleep * (2 ** (attempt - 1)))
+                sleep_for = backoff + random.uniform(0, min(1.0, backoff))
+                time.sleep(sleep_for)
+        if last_exc is not None:
+            raise last_exc
+        raise RuntimeError("Gmail API request failed without returning a response.")
 
     def list_messages(self, query: str, max_results: int = 10) -> list[dict[str, Any]]:
         response = (
-            self.service.users()
-            .messages()
-            .list(userId="me", q=query, maxResults=max_results)
-            .execute()
+            self._execute(
+                self.service.users()
+                .messages()
+                .list(userId="me", q=query, maxResults=max_results)
+            )
         )
         return response.get("messages", [])
+
+    def _get_subject_from_payload(self, payload: dict[str, Any]) -> str:
+        headers = payload.get("headers", [])
+        for header in headers:
+            if header.get("name", "").lower() == "subject":
+                return header.get("value", "")
+        return ""
+
+    def get_message_metadata(self, message_id: str) -> dict[str, Any]:
+        return self._execute(
+            self.service.users()
+            .messages()
+            .get(userId="me", id=message_id, format="metadata", metadataHeaders=["Subject"])
+        )
+
+    def fetch_attachments_from_message(
+        self,
+        message_id: str,
+        filename_regex: str = r".*\.(csv|zip)$",
+    ) -> list[AttachmentPayload]:
+        compiled = re.compile(filename_regex) if filename_regex else None
+        message = self._execute(
+            self.service.users()
+            .messages()
+            .get(userId="me", id=message_id, format="full")
+        )
+        payload = message.get("payload", {})
+
+        attachments: list[AttachmentPayload] = []
+        for att in self._extract_attachments(message_id=message_id, payload=payload):
+            if compiled and not compiled.search(att.filename):
+                continue
+            attachments.append(att)
+        return attachments
+
+    def find_latest_messages_by_subjects(
+        self,
+        subject_filters: dict[str, str],
+        lookback_days: int,
+        max_results: int,
+    ) -> dict[str, dict[str, Any]]:
+        query = f"has:attachment newer_than:{lookback_days}d"
+        messages = self.list_messages(query=query, max_results=max_results)
+        remaining = {
+            project_id: subject.strip().lower()
+            for project_id, subject in subject_filters.items()
+            if subject and subject.strip()
+        }
+        matches: dict[str, dict[str, Any]] = {}
+
+        for msg in messages:
+            if not remaining:
+                break
+            metadata = self.get_message_metadata(msg["id"])
+            payload = metadata.get("payload", {})
+            subject = self._get_subject_from_payload(payload)
+            if not subject:
+                continue
+            subject_lower = subject.lower()
+            matched_project_ids = [
+                project_id
+                for project_id, needle in remaining.items()
+                if needle in subject_lower
+            ]
+            for project_id in matched_project_ids:
+                matches[project_id] = {
+                    "message_id": msg["id"],
+                    "subject": subject,
+                }
+                remaining.pop(project_id, None)
+        return matches
 
     def _extract_attachments(self, message_id: str, payload: dict[str, Any]) -> list[AttachmentPayload]:
         out: list[AttachmentPayload] = []
@@ -78,12 +179,11 @@ class GmailClient:
             attachment_id = body.get("attachmentId")
 
             if filename and attachment_id:
-                att = (
+                att = self._execute(
                     self.service.users()
                     .messages()
                     .attachments()
                     .get(userId="me", messageId=message_id, id=attachment_id)
-                    .execute()
                 )
                 raw_data = att.get("data", "")
                 file_bytes = base64.urlsafe_b64decode(raw_data.encode("utf-8"))
@@ -116,14 +216,7 @@ class GmailClient:
         attachments: list[AttachmentPayload] = []
         for msg in messages:
             message_id = msg["id"]
-            message = (
-                self.service.users()
-                .messages()
-                .get(userId="me", id=message_id, format="full")
-                .execute()
-            )
-            payload = message.get("payload", {})
-            for att in self._extract_attachments(message_id=message_id, payload=payload):
+            for att in self.fetch_attachments_from_message(message_id=message_id, filename_regex=""):
                 if compiled and not compiled.search(att.filename):
                     continue
                 attachments.append(att)
@@ -135,23 +228,20 @@ class GmailClient:
         query: str,
         filename_regex: str = r".*\.(csv|zip)$",
         max_results: int = 20,
+        latest_only: bool = False,
     ) -> list[AttachmentPayload]:
         messages = self.list_messages(query=query, max_results=max_results)
-        compiled = re.compile(filename_regex) if filename_regex else None
+        if latest_only and messages:
+            messages = messages[:1]
 
         attachments: list[AttachmentPayload] = []
         for msg in messages:
             message_id = msg["id"]
-            message = (
-                self.service.users()
-                .messages()
-                .get(userId="me", id=message_id, format="full")
-                .execute()
+            attachments.extend(
+                self.fetch_attachments_from_message(
+                    message_id=message_id,
+                    filename_regex=filename_regex,
+                )
             )
-            payload = message.get("payload", {})
-            for att in self._extract_attachments(message_id=message_id, payload=payload):
-                if compiled and not compiled.search(att.filename):
-                    continue
-                attachments.append(att)
 
         return attachments
