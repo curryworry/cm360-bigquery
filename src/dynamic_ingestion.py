@@ -364,6 +364,7 @@ def run_subject_ingestion(
     ingestion_mode: str | None = None,
     attachments_override: list[AttachmentPayload] | None = None,
     query_override: str | None = None,
+    attachment_order: str | None = None,
 ) -> dict[str, Any]:
     if not subject_contains.strip():
         raise ValueError("subject_contains is required.")
@@ -386,6 +387,7 @@ def run_subject_ingestion(
             query=query,
             max_results=max_messages,
             latest_only=(mode == "latest_only"),
+            attachment_order=attachment_order,
         )
     else:
         query = query_override or f'subject:"{subject_contains}" has:attachment newer_than:{lookback_days}d'

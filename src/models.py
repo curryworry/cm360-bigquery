@@ -53,4 +53,4 @@ class AttachmentPayload:
     filename: str
     raw_bytes: bytes
     headers: dict[str, Any]
-
+    internal_date_ms: int | None = None

@@ -123,6 +123,7 @@ class GmailClient:
             .get(userId="me", id=message_id, format="full")
         )
         payload = message.get("payload", {})
+        payload["_message_internal_date_ms"] = message.get("internalDate")
 
         attachments: list[AttachmentPayload] = []
         for att in self._extract_attachments(message_id=message_id, payload=payload):
@@ -188,12 +189,14 @@ class GmailClient:
                 raw_data = att.get("data", "")
                 file_bytes = base64.urlsafe_b64decode(raw_data.encode("utf-8"))
                 headers = {h["name"]: h["value"] for h in payload.get("headers", [])}
+                raw_internal_date = payload.get("_message_internal_date_ms")
                 out.append(
                     AttachmentPayload(
                         message_id=message_id,
                         filename=filename,
                         raw_bytes=file_bytes,
                         headers=headers,
+                        internal_date_ms=int(raw_internal_date) if raw_internal_date else None,
                     )
                 )
 
@@ -229,6 +232,7 @@ class GmailClient:
         filename_regex: str = r".*\.(csv|zip)$",
         max_results: int = 20,
         latest_only: bool = False,
+        attachment_order: str | None = None,
     ) -> list[AttachmentPayload]:
         messages = self.list_messages(query=query, max_results=max_results)
         if latest_only and messages:
@@ -242,6 +246,14 @@ class GmailClient:
                     message_id=message_id,
                     filename_regex=filename_regex,
                 )
+            )
+
+        if attachment_order == "oldest_first":
+            attachments.sort(key=lambda att: (att.internal_date_ms or 0, att.message_id, att.filename))
+        elif attachment_order == "newest_first":
+            attachments.sort(
+                key=lambda att: (att.internal_date_ms or 0, att.message_id, att.filename),
+                reverse=True,
             )
 
         return attachments

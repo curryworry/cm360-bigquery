@@ -504,6 +504,12 @@ def run_cli() -> None:
     parser.add_argument("--target-project-id", default=None)
     parser.add_argument("--target-dataset", default=None)
     parser.add_argument("--target-table", default=None)
+    parser.add_argument(
+        "--attachment-order",
+        choices=["oldest_first", "newest_first"],
+        default=None,
+        help="Optional ordering for attachments fetched by the CLI. Defaults preserve Gmail API order.",
+    )
     args = parser.parse_args()
 
     result = run_subject_ingestion(
@@ -515,5 +521,6 @@ def run_cli() -> None:
         target_project_id=args.target_project_id,
         target_dataset=args.target_dataset,
         target_table=args.target_table,
+        attachment_order=args.attachment_order,
     )
     print(json.dumps(result, indent=2))
