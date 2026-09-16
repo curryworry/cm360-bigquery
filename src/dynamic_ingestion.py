@@ -92,9 +92,18 @@ METRIC_PATTERNS = [
     "value",
 ]
 
+DIMENSION_VALUE_COLUMNS = {
+    "num_value",
+    "ord_value",
+    "tran_value",
+    "u_value",
+}
+
 
 def _is_metric_column(col: str) -> bool:
     c = col.lower()
+    if c in DIMENSION_VALUE_COLUMNS:
+        return False
     if "%" in c:
         return True
     return any(p in c for p in METRIC_PATTERNS)
