@@ -510,6 +510,11 @@ def run_cli() -> None:
         default=None,
         help="Optional ordering for attachments fetched by the CLI. Defaults preserve Gmail API order.",
     )
+    parser.add_argument(
+        "--rebuild-table",
+        action="store_true",
+        help="Back up and delete the target table before ingesting. CLI-only recovery option.",
+    )
     args = parser.parse_args()
 
     result = run_subject_ingestion(
@@ -522,5 +527,6 @@ def run_cli() -> None:
         target_dataset=args.target_dataset,
         target_table=args.target_table,
         attachment_order=args.attachment_order,
+        rebuild_table=args.rebuild_table,
     )
     print(json.dumps(result, indent=2))

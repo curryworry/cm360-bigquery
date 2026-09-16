@@ -209,6 +209,19 @@ def _load_and_merge(
     return len(rows)
 
 
+def _backup_and_delete_table(client: bigquery.Client, full_table_id: str) -> str | None:
+    try:
+        client.get_table(full_table_id)
+    except Exception:
+        return None
+
+    timestamp = dt.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    backup_table_id = f"{full_table_id}_backup_{timestamp}"
+    client.copy_table(full_table_id, backup_table_id).result()
+    client.delete_table(full_table_id, not_found_ok=True)
+    return backup_table_id
+
+
 def _resolve_ingestion_target(
     subject_contains: str,
     target_project_id: str | None,
@@ -374,6 +387,7 @@ def run_subject_ingestion(
     attachments_override: list[AttachmentPayload] | None = None,
     query_override: str | None = None,
     attachment_order: str | None = None,
+    rebuild_table: bool = False,
 ) -> dict[str, Any]:
     if not subject_contains.strip():
         raise ValueError("subject_contains is required.")
@@ -385,6 +399,12 @@ def run_subject_ingestion(
         target_table=target_table,
         ingestion_mode=ingestion_mode,
     )
+    rebuild_backup_table = None
+    if rebuild_table and not dry_run:
+        client = bigquery.Client(project=default_project)
+        _ensure_dataset(client, default_project, dataset)
+        rebuild_backup_table = _backup_and_delete_table(client, full_table_id)
+
     lookback_days = int(os.getenv("GMAIL_LOOKBACK_DAYS", "30"))
     max_messages = int(os.getenv("GMAIL_MAX_MESSAGES", "20"))
 
@@ -402,7 +422,7 @@ def run_subject_ingestion(
         query = query_override or f'subject:"{subject_contains}" has:attachment newer_than:{lookback_days}d'
         attachments = attachments_override
 
-    return _ingest_attachments(
+    result = _ingest_attachments(
         subject_contains=subject_contains,
         attachments=attachments,
         dry_run=dry_run,
@@ -414,3 +434,7 @@ def run_subject_ingestion(
         mode=mode,
         full_table_id=full_table_id,
     )
+    if rebuild_table:
+        result["rebuild_table"] = True
+        result["rebuild_backup_table"] = rebuild_backup_table
+    return result
