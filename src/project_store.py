@@ -74,6 +74,7 @@ class ProjectStore:
             "target_dataset": data["target_dataset"],
             "target_table": data["target_table"],
             "ingestion_mode": data.get("ingestion_mode", "latest_only"),
+            "normalize_dates": data.get("normalize_dates", True),
             "schedule_time_utc": data.get("schedule_time_utc", "09:00"),
             "timezone": data.get("timezone", "Pacific/Auckland"),
             "status": data.get("status", "ACTIVE"),

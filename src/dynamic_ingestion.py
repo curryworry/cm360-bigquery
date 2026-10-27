@@ -39,7 +39,21 @@ def _safe_col(col: Any) -> str:
     return col[:120]
 
 
-def _normalize_rows(rows: list[dict[str, Any]]) -> tuple[list[dict[str, str | None]], dict[str, str]]:
+def _normalize_report_date(value: str | None) -> str | None:
+    if value is None:
+        return None
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y"):
+        try:
+            return dt.datetime.strptime(value, fmt).date().isoformat()
+        except ValueError:
+            pass
+    # Keep report footers and unrecognized values intact.
+    return value
+
+
+def _normalize_rows(
+    rows: list[dict[str, Any]], normalize_dates: bool = False,
+) -> tuple[list[dict[str, str | None]], dict[str, str]]:
     col_map: dict[str, str] = {}
     used: set[str] = set()
     out: list[dict[str, str | None]] = []
@@ -66,7 +80,7 @@ def _normalize_rows(rows: list[dict[str, Any]]) -> tuple[list[dict[str, str | No
             else:
                 val = None if raw_val is None else str(raw_val).strip()
                 val = val if val != "" else None
-            clean[key] = val
+            clean[key] = _normalize_report_date(val) if normalize_dates and key == "date" else val
         out.append(clean)
     return out, col_map
 
@@ -256,6 +270,7 @@ def _ingest_attachments(
     dataset: str,
     mode: str,
     full_table_id: str,
+    normalize_dates: bool = False,
 ) -> dict[str, Any]:
     if mode == "latest_only" and attachments:
         attachments = attachments[:1]
@@ -333,7 +348,7 @@ def _ingest_attachments(
             "results": per_attachment,
         }
 
-    normalized, col_map = _normalize_rows(raw_rows)
+    normalized, col_map = _normalize_rows(raw_rows, normalize_dates=normalize_dates)
     cols = sorted({k for row in normalized for k in row.keys()})
     key_columns, key_strategy = _select_key_columns(cols)
 
@@ -388,6 +403,7 @@ def run_subject_ingestion(
     query_override: str | None = None,
     attachment_order: str | None = None,
     rebuild_table: bool = False,
+    normalize_dates: bool = False,
 ) -> dict[str, Any]:
     if not subject_contains.strip():
         raise ValueError("subject_contains is required.")
@@ -433,6 +449,7 @@ def run_subject_ingestion(
         dataset=dataset,
         mode=mode,
         full_table_id=full_table_id,
+        normalize_dates=normalize_dates,
     )
     if rebuild_table:
         result["rebuild_table"] = True

@@ -12,6 +12,7 @@ from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from google.cloud import bigquery
+from google.api_core.exceptions import NotFound
 from pydantic import BaseModel
 
 from .auth import PasswordAuth
@@ -125,6 +126,7 @@ def _run_project_internal(
             ingestion_mode=project.get("ingestion_mode", "latest_only"),
             attachments_override=attachments_override,
             query_override=query_override,
+            normalize_dates=project.get("normalize_dates", False),
         )
         store.update_project(
             project_id,
@@ -340,8 +342,19 @@ def create_project(
             status_code=302,
         )
 
-    # First materialize data in BigQuery once, then save as ongoing project.
+    # Reusing an existing table must retain its key format.
     try:
+        client = bigquery.Client(project=target_project_id.strip())
+        try:
+            client.get_table(f"{target_project_id.strip()}.{target_dataset.strip()}.{target_table.strip()}")
+            matching = [p for p in store.list_projects() if (
+                p.get("target_project_id") == target_project_id.strip()
+                and p.get("target_dataset") == target_dataset.strip()
+                and p.get("target_table") == target_table.strip()
+            )]
+            normalize_dates = matching[0].get("normalize_dates", False) if matching else False
+        except NotFound:
+            normalize_dates = True
         result = run_subject_ingestion(
             subject_contains=subject_contains.strip(),
             dry_run=False,
@@ -351,6 +364,7 @@ def create_project(
             target_dataset=target_dataset.strip(),
             target_table=target_table.strip(),
             ingestion_mode=ingestion_mode.strip() or "latest_only",
+            normalize_dates=normalize_dates,
         )
     except Exception as exc:
         return RedirectResponse(url=f"/projects?error={quote_plus(str(exc))}", status_code=302)
@@ -358,6 +372,7 @@ def create_project(
     store.create_project(
         {
             "name": name.strip(),
+            "normalize_dates": normalize_dates,
             "subject_contains": subject_contains.strip(),
             "header_row_number": header_row_number,
             "skip_leading_rows": max(skip_leading_rows, 0),
@@ -515,6 +530,10 @@ def run_cli() -> None:
         action="store_true",
         help="Back up and delete the target table before ingesting. CLI-only recovery option.",
     )
+    parser.add_argument(
+        "--normalize-dates", action="store_true",
+        help="Normalize report Date values to ISO, interpreting slash dates as day/month/year.",
+    )
     args = parser.parse_args()
 
     result = run_subject_ingestion(
@@ -528,5 +547,6 @@ def run_cli() -> None:
         target_table=args.target_table,
         attachment_order=args.attachment_order,
         rebuild_table=args.rebuild_table,
+        normalize_dates=args.normalize_dates,
     )
     print(json.dumps(result, indent=2))

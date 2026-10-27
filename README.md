@@ -2,6 +2,13 @@
 
 Internal tool for recurring Gmail CSV/ZIP ingestion into BigQuery.
 
+New ongoing projects normalize the report `Date` column to `YYYY-MM-DD` before
+building merge keys. Slash dates are interpreted as `DD/MM/YYYY`. This is saved
+as `normalize_dates` on the project; existing projects without the setting keep
+their original date/key behavior. Creating a project against an existing table
+retains that table's existing project setting (or disables normalization when
+the table has no project). CLI imports opt in using `--normalize-dates`.
+
 ## What it does
 
 1. Finds Gmail attachments by subject.
